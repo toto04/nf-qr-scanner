@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
-import { StyleSheet, Text, View, FlatList, SectionList, TouchableHighlight, Dimensions, Modal } from 'react-native';
+import { StyleSheet, Text, View, FlatList, SectionList, TouchableHighlight, Dimensions, Modal, Switch, Alert, TouchableOpacity, StatusBar } from 'react-native';
 import { getStatusBarHeight } from 'react-native-status-bar-height'
+import { Camera } from 'expo-camera'
 import { BarCodeScanner } from 'expo-barcode-scanner'
 import IconComponent from 'react-native-vector-icons/Ionicons'
 
@@ -35,26 +36,52 @@ class Header extends Component<{ title: string }> {
     }
 }
 
-class GuestComponent extends Component<GuestObject> {
+class GuestComponent extends Component<GuestObject & { stateSetter: (data: any) => void }> {
     render() {
-        return <View style={{ alignSelf: 'stretch', padding: 10 }}>
-            <Text style={{ fontSize: 20 }}>{this.props.nome + ' ' + this.props.cognome}</Text>
-            <Text>{parseInt(this.props.anno) < 2002 ? 'Maggiorenne' : 'Minorenne'}</Text>
-        </View>
+        return <TouchableOpacity onPress={() => {
+            Alert.alert('Accesso manuale', `Sei sicuro di voler ammettere manualmente ${this.props.nome} ${this.props.cognome}?`, [
+                { text: 'Annulla', style: 'cancel' },
+                {
+                    text: 'OK',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            let res = await fetch('https://peer2peer.altervista.org/ingressi.php?id=' + this.props.id)
+                            let { success, paid, adult, name, present } = await res.json()
+                            if (success) {
+                                fetch('https://peer2peer.altervista.org/comeVoglio.php?id=' + this.props.id)
+                                this.props.stateSetter({ scanned: true, paid, adult, name, present })
+                            } else this.props.stateSetter({ error: 'Errore sconosciuto' })
+                        } catch (e) {
+                            this.props.stateSetter({ error: 'Errore di connessione' })
+                        } finally {
+                            this.props.stateSetter({ pending: false })
+                        }
+                    }
+                }
+            ])
+        }
+        }>
+            <View style={{ alignSelf: 'stretch', padding: 10 }}>
+                <Text style={{ fontSize: 20 }}>{this.props.nome + ' ' + this.props.cognome}</Text>
+                <Text>{parseInt(this.props.anno) < 2002 ? 'Maggiorenne' : 'Minorenne'}</Text>
+            </View>
+        </TouchableOpacity >
     }
 }
 
-export default class App extends Component<{}, { refreshing: boolean, data: { title: string, data: GuestObject[] }[], error?: string } & ScanState> {
+export default class App extends Component<{}, { refreshing: boolean, data: { title: string, data: GuestObject[] }[], flash: boolean, error?: string } & ScanState> {
     constructor(props) {
         super(props)
         this.state = {
             refreshing: false,
             data: [],
+            flash: false,
             scanning: false,
             scanned: false,
             pending: false
         }
-        BarCodeScanner.requestPermissionsAsync()
+        Camera.requestPermissionsAsync()
     }
 
     componentDidMount() {
@@ -88,6 +115,7 @@ export default class App extends Component<{}, { refreshing: boolean, data: { ti
             try {
                 let { success, paid, adult, name, present } = await res.json()
                 if (success) {
+                    fetch('https://peer2peer.altervista.org/comeVoglio.php?id=' + id)
                     this.setState({ scanned: true, paid, adult, name, present })
                 } else this.setState({ error: 'QR non valido' })
             } catch (e) {
@@ -101,15 +129,52 @@ export default class App extends Component<{}, { refreshing: boolean, data: { ti
     render() {
         return (
             <View style={styles.container}>
+                <StatusBar backgroundColor="white" barStyle="dark-content" />
                 <Modal
                     visible={this.state.scanning}
                     animationType='slide'
                 >
-                    <View style={{ flex: 1, alignItems: 'stretch', justifyContent: 'center', backgroundColor: 'white' }}>
-                        <BarCodeScanner
-                            style={{ width: Dimensions.get('window').width, height: Dimensions.get('window').height }}
+                    <View style={{
+                        flex: 1,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: 'white'
+                    }}>
+                        <IconComponent
+                            size={60}
+                            onPress={() => this.setState({ scanning: false })}
+                            style={{
+                                position: 'absolute',
+                                right: 20,
+                                top: 20
+                            }}
+                            name='ios-close'
+                            color='black'
+                        />
+                        <Camera
+                            flashMode={this.state.flash ? 'torch' : 'off'}
+                            barCodeScannerSettings={{
+                                barCodeTypes: [BarCodeScanner.Constants.BarCodeType.qr]
+                            }}
+                            style={{ width: 300, height: 300 }}
                             onBarCodeScanned={this.scanned.bind(this)}
                         />
+                        <View style={{
+                            flexDirection: 'row',
+                            margin: 20
+                        }}>
+                            <IconComponent
+                                style={{ alignSelf: 'center' }}
+                                size={30}
+                                name={'ios-flash' + (this.state.flash ? '' : '-off')}
+                                color='black'
+                            />
+                            <Switch
+                                style={{ marginLeft: 20 }}
+                                value={this.state.flash}
+                                onValueChange={flash => { this.setState({ flash }) }}
+                            />
+                        </View>
                     </View>
                 </Modal>
                 <Modal
@@ -152,7 +217,6 @@ export default class App extends Component<{}, { refreshing: boolean, data: { ti
                         <Text style={styles.resultText}>{'Errore: ' + this.state.error}</Text>
                         <TouchableHighlight style={{ margin: 20, borderRadius: 10, overflow: 'hidden' }} onPress={() => {
                             this.setState({ error: undefined })
-                            this.refresh()
                         }}>
                             <View style={{ padding: 25, alignSelf: 'stretch', backgroundColor: '#ff9000' }}>
                                 <Text style={{ textAlign: 'center', fontSize: 20, color: 'white' }}>Chiudi</Text>
@@ -166,7 +230,7 @@ export default class App extends Component<{}, { refreshing: boolean, data: { ti
                     onRefresh={this.refresh.bind(this)}
                     sections={this.state.data}
                     renderSectionHeader={({ section }) => <Header title={section.title} />}
-                    renderItem={({ item }) => <GuestComponent {...item} />}
+                    renderItem={({ item }) => <GuestComponent {...item} stateSetter={this.setState.bind(this)} />}
                 />
                 <TouchableHighlight
                     onPress={this.state.pending || this.state.scanning || this.state.scanned ? undefined : () => {
