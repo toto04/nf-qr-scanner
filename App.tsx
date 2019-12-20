@@ -36,31 +36,57 @@ class Header extends Component<{ title: string }> {
     }
 }
 
-class GuestComponent extends Component<GuestObject & { stateSetter: (data: any) => void }> {
+class GuestComponent extends Component<GuestObject & { stateSetter: (data: any) => void, refresher: () => void }> {
     render() {
-        return <TouchableOpacity onPress={() => {
-            Alert.alert('Accesso manuale', `Sei sicuro di voler ammettere manualmente ${this.props.nome} ${this.props.cognome}?`, [
-                { text: 'Annulla', style: 'cancel' },
-                {
-                    text: 'OK',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            let res = await fetch('https://peer2peer.altervista.org/ingressi.php?id=' + this.props.id)
-                            let { success, paid, adult, name, present } = await res.json()
-                            if (success) {
-                                fetch('https://peer2peer.altervista.org/comeVoglio.php?id=' + this.props.id)
-                                this.props.stateSetter({ scanned: true, paid, adult, name, present })
-                            } else this.props.stateSetter({ error: 'Errore sconosciuto' })
-                        } catch (e) {
-                            this.props.stateSetter({ error: 'Errore di connessione' })
-                        } finally {
-                            this.props.stateSetter({ pending: false })
+        return <TouchableOpacity onPress={this.props.presente ?
+            // se già presente
+            () => {
+                Alert.alert('Rimuovi presente', `Sei sicuro di voler rimuovere ${this.props.nome} ${this.props.cognome} dalla lista dei presenti? L'invitato verrà rimesso tra i non presenti`, [
+                    { text: 'Annulla', style: 'cancel' },
+                    {
+                        text: 'Rimuovi',
+                        style: 'destructive',
+                        onPress: async () => {
+                            try {
+                                let res = await fetch('https://peer2peer.altervista.org/comeVoglio.php?remove=1&id=' + this.props.id)
+                                let { success, removed } = await res.json()
+                                if (success && removed) {
+                                    Alert.alert('Rimuovi presente', `${this.props.nome} ${this.props.cognome} è stato rimosso dalla lista dei presenti`)
+                                } else {
+                                    Alert.alert('Rimuvoi presente', 'Errore sconosciuto, riprova più tardi')
+                                }
+                                this.props.refresher()
+                            } catch (e) {
+                                this.props.stateSetter({ error: 'Errore di connessione' })
+                            }
                         }
                     }
-                }
-            ])
-        }
+                ])
+            } :
+            // se non presente
+            () => {
+                Alert.alert('Accesso manuale', `Sei sicuro di voler ammettere manualmente ${this.props.nome} ${this.props.cognome}?`, [
+                    { text: 'Annulla', style: 'cancel' },
+                    {
+                        text: 'OK',
+                        style: 'destructive',
+                        onPress: async () => {
+                            try {
+                                let res = await fetch('https://peer2peer.altervista.org/ingressi.php?id=' + this.props.id)
+                                let { success, paid, adult, name, present } = await res.json()
+                                if (success) {
+                                    fetch('https://peer2peer.altervista.org/comeVoglio.php?id=' + this.props.id)
+                                    this.props.stateSetter({ scanned: true, paid, adult, name, present })
+                                } else this.props.stateSetter({ error: 'Errore sconosciuto' })
+                            } catch (e) {
+                                this.props.stateSetter({ error: 'Errore di connessione' })
+                            } finally {
+                                this.props.stateSetter({ pending: false })
+                            }
+                        }
+                    }
+                ])
+            }
         }>
             <View style={{ alignSelf: 'stretch', padding: 10 }}>
                 <Text style={{ fontSize: 20 }}>{this.props.nome + ' ' + this.props.cognome}</Text>
@@ -95,11 +121,17 @@ export default class App extends Component<{}, { refreshing: boolean, data: { ti
             let data = await res.json()
             let notPresents = {
                 title: 'Non presenti',
-                data: data.filter(e => e.presente == '0')
+                data: data.filter(e => e.presente == '0').map(e => {
+                    e.presente = false
+                    return e
+                })
             }
             let presents = {
                 title: 'Presenti',
-                data: data.filter(e => e.presente == '1')
+                data: data.filter(e => e.presente == '1').map(e => {
+                    e.presente = true
+                    return e
+                })
             }
             this.setState({ refreshing: false, data: [notPresents, presents], error: undefined })
         } catch (e) {
@@ -230,7 +262,7 @@ export default class App extends Component<{}, { refreshing: boolean, data: { ti
                     onRefresh={this.refresh.bind(this)}
                     sections={this.state.data}
                     renderSectionHeader={({ section }) => <Header title={section.title} />}
-                    renderItem={({ item }) => <GuestComponent {...item} stateSetter={this.setState.bind(this)} />}
+                    renderItem={({ item }) => <GuestComponent {...item} stateSetter={this.setState.bind(this)} refresher={this.refresh.bind(this)} />}
                 />
                 <TouchableHighlight
                     onPress={this.state.pending || this.state.scanning || this.state.scanned ? undefined : () => {
